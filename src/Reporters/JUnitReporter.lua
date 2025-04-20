@@ -4,110 +4,126 @@ local JUnitReporter = {}
 
 -- Escape special XML characters in attributes
 local function escapeXml(str)
-    return tostring(str)
-        :gsub("&", "&amp;")
-        :gsub("<", "&lt;")
-        :gsub(">", "&gt;")
-        :gsub('"', "&quot;")
-        :gsub("'", "&apos;")
+	return tostring(str)
+		:gsub("&", "&amp;")
+		:gsub("<", "&lt;")
+		:gsub(">", "&gt;")
+		:gsub('"', "&quot;")
+		:gsub("'", "&apos;")
 end
 
-local function createTestCase(name, classname, status, errors)
-    local tc = {
-        tag = "testcase",
-        attributes = {
-            name = escapeXml(name),
-            classname = escapeXml(classname),
-        },
-        children = {},
-    }
+-- Create a <testcase> XML node
+local function createTestCase(testNode, classPrefix)
+	local phrase = testNode.planNode.phrase
+	local classname = classPrefix or ""
+	local status = testNode.status
+	local errors = testNode.errors
 
-    if status == TestEnum.TestStatus.Failure then
-        local firstLine = errors and errors[1] or "Test failed"
-        table.insert(tc.children, {
-            tag = "failure",
-            attributes = {
-                message = escapeXml(firstLine),
-            },
-            children = {},
-        })
-    end
+	local testCase = {
+		tag = "testcase",
+		attributes = {
+			name = escapeXml(phrase),
+			classname = escapeXml(classname),
+		},
+		children = {},
+	}
 
-    return tc
+	if status == TestEnum.TestStatus.Failure then
+		local message = errors and errors[1] or "Test failed"
+		table.insert(testCase.children, {
+			tag = "failure",
+			attributes = {
+				message = escapeXml(message),
+			},
+			children = {},
+		})
+	end
+
+	return testCase
 end
 
-local function reportNode(node, classPrefix)
-    local elems = {}
+-- Recursively flatten test nodes and collect test cases grouped by suite
+local function collectTestSuites(node, parentName, suites)
+	parentName = parentName and (parentName .. "." .. node.planNode.phrase) or node.planNode.phrase
 
-    if node.planNode.type == TestEnum.NodeType.Describe then
-        local suite = {
-            tag = "testsuite",
-            attributes = {
-                name = escapeXml(node.planNode.phrase),
-            },
-            children = {},
-        }
+	if node.planNode.type == TestEnum.NodeType.Describe then
+		for _, child in ipairs(node.children) do
+			collectTestSuites(child, parentName, suites)
+		end
+	elseif node.planNode.type == TestEnum.NodeType.It then
+		local suite = suites[parentName]
 
-        local prefix = classPrefix and (classPrefix .. "." .. node.planNode.phrase) or node.planNode.phrase
+		if not suite then
+			suite = {
+				tag = "testsuite",
+				attributes = {
+					name = escapeXml(parentName),
+					tests = 0,
+					failures = 0,
+					errors = 0,
+				},
+				children = {},
+			}
+			suites[parentName] = suite
+		end
 
-        for _, child in ipairs(node.children) do
-            for _, sub in ipairs(reportNode(child, prefix)) do
-                table.insert(suite.children, sub)
-            end
-        end
+		suite.attributes.tests = suite.attributes.tests + 1
 
-        table.insert(elems, suite)
-    else
-        table.insert(elems, createTestCase(
-            node.planNode.phrase,
-            classPrefix or "",
-            node.status,
-            node.errors
-        ))
-    end
+		if node.status == TestEnum.TestStatus.Failure then
+			suite.attributes.failures = suite.attributes.failures + 1
+		end
 
-    return elems
+		local testCase = createTestCase(node, parentName)
+		table.insert(suite.children, testCase)
+	end
 end
 
+-- Render XML from our custom node structure
+local function render(node)
+	local attrStr = ""
+	for k, v in pairs(node.attributes or {}) do
+		attrStr = attrStr .. string.format(' %s="%s"', k, v)
+	end
+
+	local xml = ""
+
+	if #node.children == 0 then
+		xml = string.format("<%s%s />", node.tag, attrStr)
+	else
+		xml = string.format("<%s%s>", node.tag, attrStr)
+
+		for _, child in ipairs(node.children or {}) do
+			xml = xml .. render(child)
+		end
+
+		xml = xml .. string.format("</%s>", node.tag)
+	end
+
+	return xml
+end
+
+-- Main report function
 function JUnitReporter.report(results)
-    local root = {
-        tag = "testsuites",
-        children = {},
-    }
+	local suites = {}
 
-    for _, child in ipairs(results.children or {}) do
-        for _, suite in ipairs(reportNode(child)) do
-            table.insert(root.children, suite)
-        end
-    end
+	-- Collect flat suite list
+	for _, child in ipairs(results.children or {}) do
+		collectTestSuites(child, nil, suites)
+	end
 
-    local function render(node)
-        local attrStr = ""
-        for k, v in pairs(node.attributes or {}) do
-            attrStr = attrStr .. string.format(' %s="%s"', k, v)
-        end
+	-- Assemble top-level <testsuites> node
+	local root = {
+		tag = "testsuites",
+		children = {},
+	}
 
-        local xml = ""
+	for _, suite in pairs(suites) do
+		table.insert(root.children, suite)
+	end
 
-        if #node.children == 0 then
-            xml = string.format("<%s%s></%s>", node.tag, attrStr, node.tag)
-        else
-            xml = string.format("<%s%s>", node.tag, attrStr)
-			if node.tag ~= "failure" then
-
-				for _, child in ipairs(node.children or {}) do
-					xml = xml .. render(child)
-				end
-			end
-            xml = xml .. string.format("</%s>", node.tag)
-        end
-
-        return xml
-    end
-
-    local xmlDoc = '<?xml version="1.0" encoding="UTF-8"?>\n' .. render(root)
+	local xmlDoc = '<?xml version="1.0" encoding="UTF-8"?>\n' .. render(root)
 	print(xmlDoc)
-    return xmlDoc
+	return xmlDoc
 end
 
 return JUnitReporter
