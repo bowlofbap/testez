@@ -1,6 +1,6 @@
 [package]
 name = "bowlofbap/testez"
-version = "0.4.2-junit.2"
+version = "0.4.2-junit.4"
 license = "Apache2"
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"

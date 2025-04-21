@@ -103,6 +103,7 @@ function TestBootstrap:run(roots, reporter, otherOptions)
 	local showTimingInfo = otherOptions["showTimingInfo"] or false
 	local testNamePattern = otherOptions["testNamePattern"]
 	local extraEnvironment = otherOptions["extraEnvironment"] or {}
+	local extraReporters = otherOptions["extraReporters"] or {}
 
 	if type(roots) ~= "table" then
 		error(("Bad argument #1 to TestBootstrap:run. Expected table, got %s"):format(typeof(roots)), 2)
@@ -128,6 +129,9 @@ function TestBootstrap:run(roots, reporter, otherOptions)
 	local afterRun = tick()
 
 	reporter.report(results)
+	for _, eReporter in ipairs(extraReporters) do
+		eReporter.report(results)
+	end
 	local afterReport = tick()
 
 	if showTimingInfo then
