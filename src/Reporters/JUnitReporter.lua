@@ -2,7 +2,6 @@ local TestEnum = require(script.Parent.Parent.TestEnum)
 
 local JUnitReporter = {}
 
--- Escape special XML characters in attributes
 local function escapeXml(str)
 	return tostring(str)
 		:gsub("&", "&amp;")
@@ -12,10 +11,8 @@ local function escapeXml(str)
 		:gsub("'", "&apos;")
 end
 
--- Create a <testcase> XML node
-local function createTestCase(testNode, classPrefix)
+local function createTestCase(testNode, classname)
 	local phrase = testNode.planNode.phrase
-	local classname = classPrefix or ""
 	local status = testNode.status
 	local errors = testNode.errors
 
@@ -42,43 +39,44 @@ local function createTestCase(testNode, classPrefix)
 	return testCase
 end
 
--- Recursively flatten test nodes and collect test cases grouped by suite
-local function collectTestSuites(node, parentName, suites)
-	parentName = parentName and (parentName .. "." .. node.planNode.phrase) or node.planNode.phrase
+-- Recursively walk test tree and collect grouped test cases
+local function collectTestSuites(node, parentPath, suites)
+	local currentPath = parentPath and (parentPath .. "." .. node.planNode.phrase) or node.planNode.phrase
 
 	if node.planNode.type == TestEnum.NodeType.Describe then
 		for _, child in ipairs(node.children) do
-			collectTestSuites(child, parentName, suites)
+			collectTestSuites(child, currentPath, suites)
 		end
 	elseif node.planNode.type == TestEnum.NodeType.It then
-		local suite = suites[parentName]
+		-- Extract suite name from path: everything except the last segment
+		local suiteName = parentPath or "Root"
+		local fullClassname = currentPath
 
+		local suite = suites[suiteName]
 		if not suite then
 			suite = {
 				tag = "testsuite",
 				attributes = {
-					name = escapeXml(parentName),
+					name = escapeXml(suiteName),
 					tests = 0,
 					failures = 0,
 					errors = 0,
 				},
 				children = {},
 			}
-			suites[parentName] = suite
+			suites[suiteName] = suite
 		end
 
-		suite.attributes.tests = suite.attributes.tests + 1
-
+		suite.attributes.tests += 1
 		if node.status == TestEnum.TestStatus.Failure then
-			suite.attributes.failures = suite.attributes.failures + 1
+			suite.attributes.failures += 1
 		end
 
-		local testCase = createTestCase(node, parentName)
+		local testCase = createTestCase(node, fullClassname)
 		table.insert(suite.children, testCase)
 	end
 end
 
--- Render XML from our custom node structure
 local function render(node)
 	local attrStr = ""
 	for k, v in pairs(node.attributes or {}) do
@@ -86,32 +84,25 @@ local function render(node)
 	end
 
 	local xml = ""
-
 	if #node.children == 0 then
 		xml = string.format("<%s%s />", node.tag, attrStr)
 	else
 		xml = string.format("<%s%s>", node.tag, attrStr)
-
 		for _, child in ipairs(node.children or {}) do
 			xml = xml .. render(child)
 		end
-
 		xml = xml .. string.format("</%s>", node.tag)
 	end
-
 	return xml
 end
 
--- Main report function
 function JUnitReporter.report(results)
 	local suites = {}
 
-	-- Collect flat suite list
 	for _, child in ipairs(results.children or {}) do
 		collectTestSuites(child, nil, suites)
 	end
 
-	-- Assemble top-level <testsuites> node
 	local root = {
 		tag = "testsuites",
 		children = {},
