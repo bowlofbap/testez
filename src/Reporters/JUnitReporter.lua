@@ -39,6 +39,18 @@ local function createTestCase(testNode, classname)
 	return testCase
 end
 
+-- Collapse to a consistent suite name by trimming extra nesting
+local function extractSuiteName(fullPath)
+	local parts = {}
+	for part in string.gmatch(fullPath, "[^%.]+") do
+		table.insert(parts, part)
+	end
+
+	-- You can adjust this number depending on your nesting depth preferences
+	local depth = math.min(#parts, 4)
+	return table.concat(parts, ".", 1, depth)
+end
+
 -- Recursively walk test tree and collect grouped test cases
 local function collectTestSuites(node, parentPath, suites)
 	local currentPath = parentPath and (parentPath .. "." .. node.planNode.phrase) or node.planNode.phrase
@@ -49,7 +61,8 @@ local function collectTestSuites(node, parentPath, suites)
 		end
 	elseif node.planNode.type == TestEnum.NodeType.It then
 		-- Extract suite name from path: everything except the last segment
-		local suiteName = parentPath or "Root"
+
+local suiteName = extractSuiteName(currentPath)
 		local fullClassname = currentPath
 
 		local suite = suites[suiteName]
